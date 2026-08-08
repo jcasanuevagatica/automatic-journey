@@ -1,0 +1,35 @@
+name: Probar script Windows real
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruir script real
+        shell: powershell
+        run: |
+          $b64=(Get-Content .\realwin\miagenda_ps_test.zip.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes((Join-Path $PWD 'miagenda.zip'),[Convert]::FromBase64String($b64))
+          $h=(Get-FileHash .\miagenda.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne '341566f779133724e7934bab6be94842def6524c757ec9baeb8432da0ad33264'){throw "ZIP alterado $h"}
+          Expand-Archive .\miagenda.zip -DestinationPath .\real -Force
+      - name: Analizar sintaxis PowerShell
+        shell: powershell
+        run: |
+          $text=Get-Content .\real\MiAgenda.ps1 -Raw
+          $tokens=$null; $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count -gt 0){$errors|Format-List *; throw 'Errores de sintaxis'}
+      - name: Ejecutar modo SyncOnly
+        shell: powershell
+        run: |
+          powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File .\real\MiAgenda.ps1 -SyncOnly
+          if($LASTEXITCODE -ne 0){throw "SyncOnly fallo con $LASTEXITCODE"}
