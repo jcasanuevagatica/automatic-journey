@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruir script real
+      - name: Reconstruir script real y aplicar correccion 4.0.3
         shell: powershell
         run: |
           $b64=(Get-Content .\realwin\miagenda_ps_test.zip.b64 -Raw).Trim()
@@ -21,6 +21,11 @@ jobs:
           $h=(Get-FileHash .\miagenda.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if($h -ne '341566f779133724e7934bab6be94842def6524c757ec9baeb8432da0ad33264'){throw "ZIP alterado $h"}
           Expand-Archive .\miagenda.zip -DestinationPath .\real -Force
+          $path='.\real\MiAgenda.ps1'
+          $text=Get-Content $path -Raw
+          if($text -notmatch 'return\$b'){throw 'No se encontro el error esperado return$b'}
+          $text=$text.Replace('return$b}','return $b}')
+          [IO.File]::WriteAllText((Resolve-Path $path),$text,(New-Object Text.UTF8Encoding($false)))
       - name: Analizar sintaxis PowerShell
         shell: powershell
         run: |
@@ -28,8 +33,23 @@ jobs:
           $tokens=$null; $errors=$null
           [System.Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)|Out-Null
           if($errors.Count -gt 0){$errors|Format-List *; throw 'Errores de sintaxis'}
+          if($text -match '\b(return|throw|break|continue)\$'){throw 'Quedo una palabra reservada pegada a una variable'}
       - name: Ejecutar modo SyncOnly
         shell: powershell
         run: |
           powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File .\real\MiAgenda.ps1 -SyncOnly
           if($LASTEXITCODE -ne 0){throw "SyncOnly fallo con $LASTEXITCODE"}
+      - name: Abrir interfaz y comprobar que no termine al iniciar
+        shell: powershell
+        run: |
+          $out=Join-Path $PWD 'ui-out.txt'
+          $err=Join-Path $PWD 'ui-err.txt'
+          $p=Start-Process powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',(Resolve-Path '.\real\MiAgenda.ps1')) -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          Start-Sleep -Seconds 8
+          if($p.HasExited){
+            Write-Host 'STDOUT:'; if(Test-Path $out){Get-Content $out}
+            Write-Host 'STDERR:'; if(Test-Path $err){Get-Content $err}
+            throw "La interfaz termino prematuramente con codigo $($p.ExitCode)"
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host 'Interfaz permanecio abierta durante la prueba de inicio.'
