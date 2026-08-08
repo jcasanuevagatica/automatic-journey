@@ -1,0 +1,45 @@
+name: Probar instalador Windows 4.0.2
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  install-test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruir paquete 4.0.2
+        shell: powershell
+        run: |
+          $b64=(Get-Content .\realwin402\package.zip.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes((Join-Path $PWD 'package.zip'),[Convert]::FromBase64String($b64))
+          $h=(Get-FileHash .\package.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne '405f3ec7d7a4e0907d933a5ad9f31be2be0a1d9555e71da4960728003f7bcd98'){throw "Paquete alterado $h"}
+          Expand-Archive .\package.zip -DestinationPath .\package -Force
+      - name: Analizar sintaxis del script real
+        shell: powershell
+        run: |
+          $text=Get-Content .\package\MiAgenda.ps1 -Raw
+          $tokens=$null;$errors=$null
+          [System.Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count -gt 0){$errors|Format-List *;throw 'Errores de sintaxis'}
+      - name: Ejecutar instalador 4.0.2
+        shell: cmd
+        run: |
+          cd /d "%GITHUB_WORKSPACE%\package"
+          call 1_INSTALAR_MiAgenda.cmd
+          if errorlevel 1 exit /b %errorlevel%
+      - name: Verificar instalación real
+        shell: powershell
+        run: |
+          $app=Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          foreach($f in @('MiAgenda.ps1','ABRIR_MiAgenda.cmd','SINCRONIZAR_AHORA.cmd','DIAGNOSTICO_MiAgenda.cmd')){
+            if(-not(Test-Path (Join-Path $app $f))){throw "Falta instalado: $f"}
+          }
+          powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $app 'MiAgenda.ps1') -SyncOnly
+          if($LASTEXITCODE -ne 0){throw "SyncOnly instalado fallo: $LASTEXITCODE"}
