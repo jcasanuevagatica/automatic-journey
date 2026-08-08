@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruir script real y aplicar correccion 4.0.3 sin recodificar
+      - name: Reconstruir script real
         shell: powershell
         run: |
           $b64=(Get-Content .\realwin\miagenda_ps_test.zip.b64 -Raw).Trim()
@@ -21,7 +21,17 @@ jobs:
           $h=(Get-FileHash .\miagenda.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if($h -ne '341566f779133724e7934bab6be94842def6524c757ec9baeb8432da0ad33264'){throw "ZIP alterado $h"}
           Expand-Archive .\miagenda.zip -DestinationPath .\real -Force
-          python -c "from pathlib import Path; p=Path(r'real/MiAgenda.ps1'); b=p.read_bytes(); assert b'return$b}' in b; b=b.replace(b'return$b}',b'return $b}',1); b=(b'\xef\xbb\xbf'+b) if not b.startswith(b'\xef\xbb\xbf') else b; p.write_bytes(b)"
+      - name: Aplicar correccion 4.0.3 sin PowerShell
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path(r'real/MiAgenda.ps1')
+          b=p.read_bytes()
+          assert b'return$b}' in b
+          b=b.replace(b'return$b}',b'return $b}',1)
+          if not b.startswith(b'\xef\xbb\xbf'):
+              b=b'\xef\xbb\xbf'+b
+          p.write_bytes(b)
       - name: Analizar sintaxis con Windows PowerShell 5.1
         shell: powershell
         run: |
