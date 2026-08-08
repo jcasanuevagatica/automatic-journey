@@ -13,14 +13,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruir paquete 4.0.2
+      - name: Reconstruir script real validado
         shell: powershell
         run: |
-          $b64=(Get-Content .\realwin402\package.zip.b64 -Raw).Trim()
-          [IO.File]::WriteAllBytes((Join-Path $PWD 'package.zip'),[Convert]::FromBase64String($b64))
-          $h=(Get-FileHash .\package.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          if($h -ne '405f3ec7d7a4e0907d933a5ad9f31be2be0a1d9555e71da4960728003f7bcd98'){throw "Paquete alterado $h"}
-          Expand-Archive .\package.zip -DestinationPath .\package -Force
+          $b64=(Get-Content .\realwin\miagenda_ps_test.zip.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes((Join-Path $PWD 'script.zip'),[Convert]::FromBase64String($b64))
+          $h=(Get-FileHash .\script.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne '341566f779133724e7934bab6be94842def6524c757ec9baeb8432da0ad33264'){throw "Script alterado $h"}
+          New-Item -ItemType Directory -Path .\package -Force | Out-Null
+          Expand-Archive .\script.zip -DestinationPath .\package -Force
+          Copy-Item .\realwin402\1_INSTALAR_MiAgenda.cmd .\package\1_INSTALAR_MiAgenda.cmd -Force
       - name: Analizar sintaxis del script real
         shell: powershell
         run: |
