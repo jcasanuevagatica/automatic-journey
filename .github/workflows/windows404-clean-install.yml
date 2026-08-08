@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Preparar instalador y script corregido
+      - name: Preparar instalador y script base
         shell: powershell
         run: |
           git fetch origin agent/windows404-simple:refs/remotes/origin/agent/windows404-simple
@@ -25,17 +25,17 @@ jobs:
           Expand-Archive .\miagenda.zip -DestinationPath .\real -Force
           Copy-Item .\real\MiAgenda.ps1 .\test404\MiAgenda.ps1 -Force
 
-      - name: Corregir return b sin recodificar
+      - name: Convertir al archivo Windows exacto 4.0.3 corregido
         shell: python
         run: |
           from pathlib import Path
           p=Path(r'test404/MiAgenda.ps1')
-          b=p.read_bytes()
-          assert b'return$b}' in b
-          b=b.replace(b'return$b}',b'return $b}',1)
-          if not b.startswith(b'\xef\xbb\xbf'):
-              b=b'\xef\xbb\xbf'+b
-          p.write_bytes(b)
+          s=p.read_text(encoding='utf-8')
+          assert 'return$b}' in s
+          s=s.replace('return$b}','return $b}',1)
+          s=s.replace('Mi Agenda 4.0 - Windows','Mi Agenda 4.0.3 - Windows',1)
+          s=s.replace('\r\n','\n').replace('\r','\n').replace('\n','\r\n')
+          p.write_bytes(b'\xef\xbb\xbf'+s.encode('utf-8'))
 
       - name: Verificar hash del archivo que se instalará
         shell: powershell
