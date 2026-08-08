@@ -21,9 +21,17 @@ jobs:
           $b64 = (Get-Content winci/source.b64 -Raw).Trim()
           $bytes = [Convert]::FromBase64String($b64)
           [IO.File]::WriteAllBytes((Join-Path $PWD 'windows-ci.zip'), $bytes)
-          $hash = (Get-FileHash .\windows-ci.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne '2f941f95aae29bd520802fbafe8951d78f1d8d99fe7ff4e94795667678a630cc') { throw "SHA-256 Windows no coincide: $hash" }
           Expand-Archive .\windows-ci.zip -DestinationPath .\windows-ci -Force
+          $expected = @{
+            'MiAgenda.ps1'='7c4f363cde746a5c3e31de509a0fb106566ec29c52fa1c66055b299af29d6622'
+            'Instalar_MiAgenda.bat'='cf089ef159526c5db8de913e21ee5c10f6273f33a7a9bcdf99c4066291094cde'
+            'Ejecutar_MiAgenda.bat'='ebf58e862cf0e7f47fcc9d4389445ae87269ea8aa015f98e8187a3e53a680a74'
+            'Desinstalar_MiAgenda.bat'='582242e6ad445447b6fa62b78c58cfc907a6b3c2d6e0db5b8f9465c5207ef970'
+          }
+          foreach ($name in $expected.Keys) {
+            $hash=(Get-FileHash (Join-Path '.\windows-ci' $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -ne $expected[$name]) { throw "Archivo alterado: $name ($hash)" }
+          }
 
       - name: Analizar sintaxis PowerShell
         shell: powershell
