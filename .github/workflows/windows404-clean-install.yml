@@ -1,0 +1,93 @@
+name: Probar Mi Agenda Windows 4.0.4 limpia
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  clean-install:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar instalador y script base
+        shell: powershell
+        run: |
+          git fetch origin agent/windows404-simple:refs/remotes/origin/agent/windows404-simple
+          New-Item -ItemType Directory -Path .\test404 -Force | Out-Null
+          git show origin/agent/windows404-simple:win404/1_REPARAR_E_INSTALAR_MiAgenda_4.0.4.cmd | Set-Content -LiteralPath .\test404\1_REPARAR_E_INSTALAR_MiAgenda_4.0.4.cmd -Encoding Ascii
+          $b64=(Get-Content .\realwin\miagenda_ps_test.zip.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes((Join-Path $PWD 'miagenda.zip'),[Convert]::FromBase64String($b64))
+          Expand-Archive .\miagenda.zip -DestinationPath .\real -Force
+          Copy-Item .\real\MiAgenda.ps1 .\test404\MiAgenda.ps1 -Force
+
+      - name: Convertir al archivo Windows exacto 4.0.3 corregido
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path(r'test404/MiAgenda.ps1')
+          s=p.read_text(encoding='utf-8')
+          assert 'return$b}' in s
+          s=s.replace('return$b}','return $b}',1)
+          s=s.replace('Mi Agenda 4.0 - Windows','Mi Agenda 4.0.3 - Windows',1)
+          s=s.replace('\r\n','\n').replace('\r','\n').replace('\n','\r\n')
+          p.write_bytes(b'\xef\xbb\xbf'+s.encode('utf-8'))
+
+      - name: Verificar hash del archivo que se instalará
+        shell: powershell
+        run: |
+          $h=(Get-FileHash .\test404\MiAgenda.ps1 -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne 'af1c77752e8c7eb3e139c70423a1d9f7f91289ae019a8887f5cb1367e0dc7e48'){ throw "Hash inesperado: $h" }
+          if(Select-String -LiteralPath .\test404\MiAgenda.ps1 -SimpleMatch 'return$b'){ throw 'La copia nueva todavía contiene return$b' }
+
+      - name: Sembrar una copia vieja defectuosa
+        shell: python
+        run: |
+          from pathlib import Path
+          import os
+          src=Path(r'test404/MiAgenda.ps1').read_bytes()
+          old=src.replace(b'return $b}',b'return$b}',1)
+          app=Path(os.environ['LOCALAPPDATA'])/'MiAgenda-App'
+          app.mkdir(parents=True,exist_ok=True)
+          (app/'MiAgenda.ps1').write_bytes(old)
+          assert b'return$b}' in (app/'MiAgenda.ps1').read_bytes()
+
+      - name: Ejecutar reparación e instalación 4.0.4
+        shell: cmd
+        run: |
+          cd /d "%GITHUB_WORKSPACE%\test404"
+          call 1_REPARAR_E_INSTALAR_MiAgenda_4.0.4.cmd
+          if errorlevel 1 exit /b %errorlevel%
+
+      - name: Verificar que reemplazó la copia vieja
+        shell: powershell
+        run: |
+          $app=Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          $file=Join-Path $app 'MiAgenda.ps1'
+          if(-not(Test-Path $file)){throw 'No se instaló MiAgenda.ps1'}
+          $h=(Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne 'af1c77752e8c7eb3e139c70423a1d9f7f91289ae019a8887f5cb1367e0dc7e48'){throw "Hash instalado incorrecto: $h"}
+          if(Select-String -LiteralPath $file -SimpleMatch 'return$b'){throw 'La copia instalada todavía contiene return$b'}
+          $tokens=$null;$errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count -gt 0){$errors|Format-List *;throw 'Sintaxis instalada inválida'}
+
+      - name: Comprobar que la interfaz no se cierre al iniciar
+        shell: powershell
+        run: |
+          $app=Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          $out=Join-Path $PWD 'ui-out.txt'
+          $err=Join-Path $PWD 'ui-err.txt'
+          $p=Start-Process powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',(Join-Path $app 'MiAgenda.ps1')) -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          Start-Sleep -Seconds 8
+          if($p.HasExited){
+            if(Test-Path $out){Get-Content $out}
+            if(Test-Path $err){Get-Content $err}
+            throw 'La interfaz se cerró durante la prueba'
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host 'Instalación limpia y arranque de interfaz: OK'
