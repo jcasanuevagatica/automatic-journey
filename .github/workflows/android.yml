@@ -21,7 +21,12 @@ jobs:
       - name: Reconstruir proyecto revisado
         shell: bash
         run: |
-          cat ci2/p* > project.zip.b64
+          : > project.zip.b64
+          for f in $(find ci2 -maxdepth 1 -type f -name 'p*' | sort); do
+            tr -d '\r\n' < "$f" >> project.zip.b64
+          done
+          test "$(wc -c < project.zip.b64)" -eq 54556
+          echo "196e7a4529291762a0fe8a47af465c22ec2669fe3c5f108ec194490db5233932  project.zip.b64" | sha256sum -c -
           base64 -d project.zip.b64 > project.zip
           echo "a58852c6560560af5f123fe811731247b3ad1dfc9e14c0db6caf813d469d5b5a  project.zip" | sha256sum -c -
           mkdir project
