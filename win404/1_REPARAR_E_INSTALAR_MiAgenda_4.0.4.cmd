@@ -7,13 +7,17 @@ set "APP=%LOCALAPPDATA%\MiAgenda-App"
 if not defined LOCALAPPDATA set "APP=%USERPROFILE%\AppData\Local\MiAgenda-App"
 set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "EXPECTED=af1c77752e8c7eb3e139c70423a1d9f7f91289ae019a8887f5cb1367e0dc7e48"
+set "MIAGENDA_SOURCE=%SRC%MiAgenda.ps1"
+set "MIAGENDA_INSTALLED=%APP%\MiAgenda.ps1"
+set "HASH1=%TEMP%\MiAgenda_source_hash.txt"
+set "HASH2=%TEMP%\MiAgenda_installed_hash.txt"
 
 echo ==============================================
 echo      MI AGENDA 4.0.4 - REPARAR E INSTALAR
 echo ==============================================
 echo.
 
-if not exist "%SRC%MiAgenda.ps1" (
+if not exist "%MIAGENDA_SOURCE%" (
   echo ERROR: Falta MiAgenda.ps1 en esta carpeta.
   echo Debes EXTRAER TODO el ZIP antes de ejecutar este archivo.
   pause
@@ -26,19 +30,26 @@ if not exist "%PS%" (
 )
 
 echo [1/7] Verificando el archivo nuevo antes de instalar...
-for /f "usebackq delims=" %%H in (`"%PS%" -NoProfile -Command "(Get-FileHash -LiteralPath '%SRC%MiAgenda.ps1' -Algorithm SHA256).Hash.ToLowerInvariant()"`) do set "SOURCEHASH=%%H"
+del /Q "%HASH1%" >nul 2>nul
+"%PS%" -NoLogo -NoProfile -Command "(Get-FileHash -LiteralPath $env:MIAGENDA_SOURCE -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content -LiteralPath $env:HASH1 -NoNewline -Encoding ascii"
+if errorlevel 1 (
+  echo ERROR: No se pudo calcular el SHA-256 del archivo nuevo.
+  pause
+  exit /b 12
+)
+set /p SOURCEHASH=<"%HASH1%"
 if /I not "%SOURCEHASH%"=="%EXPECTED%" (
   echo ERROR: El archivo nuevo no coincide con la version verificada.
   echo Esperado: %EXPECTED%
   echo Obtenido: %SOURCEHASH%
   pause
-  exit /b 12
+  exit /b 13
 )
-findstr /L /C:"return$b" "%SRC%MiAgenda.ps1" >nul 2>nul
+findstr /L /C:"return$b" "%MIAGENDA_SOURCE%" >nul 2>nul
 if not errorlevel 1 (
   echo ERROR: El paquete todavia contiene return$b. No se instalara.
   pause
-  exit /b 13
+  exit /b 14
 )
 
 echo [2/7] Cerrando la version anterior...
@@ -51,51 +62,58 @@ if exist "%APP%" (
   echo %APP%
   echo Cierra Mi Agenda y vuelve a intentarlo.
   pause
-  exit /b 14
+  exit /b 15
 )
 mkdir "%APP%" >nul 2>nul
 if not exist "%APP%" (
   echo ERROR: No se pudo crear la carpeta de instalacion.
   pause
-  exit /b 15
+  exit /b 16
 )
 
 echo [4/7] Copiando la version corregida...
-copy /B /Y "%SRC%MiAgenda.ps1" "%APP%\MiAgenda.ps1" >nul
+copy /B /Y "%MIAGENDA_SOURCE%" "%MIAGENDA_INSTALLED%" >nul
 if errorlevel 1 (
   echo ERROR: No se pudo copiar MiAgenda.ps1.
   pause
-  exit /b 16
+  exit /b 17
 )
-for /f "usebackq delims=" %%H in (`"%PS%" -NoProfile -Command "(Get-FileHash -LiteralPath '%APP%\MiAgenda.ps1' -Algorithm SHA256).Hash.ToLowerInvariant()"`) do set "INSTALLEDHASH=%%H"
+del /Q "%HASH2%" >nul 2>nul
+"%PS%" -NoLogo -NoProfile -Command "(Get-FileHash -LiteralPath $env:MIAGENDA_INSTALLED -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content -LiteralPath $env:HASH2 -NoNewline -Encoding ascii"
+if errorlevel 1 (
+  echo ERROR: No se pudo calcular el SHA-256 instalado.
+  pause
+  exit /b 18
+)
+set /p INSTALLEDHASH=<"%HASH2%"
 if /I not "%INSTALLEDHASH%"=="%EXPECTED%" (
   echo ERROR: Windows no copio correctamente la version nueva.
   echo Esperado: %EXPECTED%
   echo Instalado: %INSTALLEDHASH%
   pause
-  exit /b 17
+  exit /b 19
 )
-findstr /L /C:"return$b" "%APP%\MiAgenda.ps1" >nul 2>nul
+findstr /L /C:"return$b" "%MIAGENDA_INSTALLED%" >nul 2>nul
 if not errorlevel 1 (
   echo ERROR: La copia instalada conserva return$b.
   pause
-  exit /b 18
+  exit /b 20
 )
 
 echo [5/7] Validando sintaxis...
-"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$t=$null;$e=$null;[System.Management.Automation.Language.Parser]::ParseFile('%APP%\MiAgenda.ps1',[ref]$t,[ref]$e)|Out-Null;if($e.Count -gt 0){$e|Format-List *;exit 1}"
+"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$t=$null;$e=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:MIAGENDA_INSTALLED,[ref]$t,[ref]$e)|Out-Null;if($e.Count -gt 0){$e|Format-List *;exit 1}"
 if errorlevel 1 (
   echo ERROR: La sintaxis no paso la validacion.
   pause
-  exit /b 19
+  exit /b 21
 )
 
 echo [6/7] Probando el motor...
-"%PS%" -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%APP%\MiAgenda.ps1" -SyncOnly
+"%PS%" -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%MIAGENDA_INSTALLED%" -SyncOnly
 if errorlevel 1 (
   echo ERROR: La prueba interna fallo.
   pause
-  exit /b 20
+  exit /b 22
 )
 
 > "%APP%\ABRIR_MiAgenda.cmd" echo @echo off
@@ -111,7 +129,8 @@ if errorlevel 1 (
 >>"%APP%\REVISAR_VERSION.cmd" echo pause
 
 echo [7/7] Creando acceso directo...
-"%PS%" -NoLogo -NoProfile -Command "$desktop=[Environment]::GetFolderPath('Desktop');$w=New-Object -ComObject WScript.Shell;$l=$w.CreateShortcut((Join-Path $desktop 'Mi Agenda.lnk'));$l.TargetPath='%APP%\ABRIR_MiAgenda.cmd';$l.WorkingDirectory='%APP%';$l.IconLocation=$env:SystemRoot+'\System32\shell32.dll,44';$l.Save()"
+set "MIAGENDA_APP=%APP%"
+"%PS%" -NoLogo -NoProfile -Command "$desktop=[Environment]::GetFolderPath('Desktop');$w=New-Object -ComObject WScript.Shell;$l=$w.CreateShortcut((Join-Path $desktop 'Mi Agenda.lnk'));$l.TargetPath=(Join-Path $env:MIAGENDA_APP 'ABRIR_MiAgenda.cmd');$l.WorkingDirectory=$env:MIAGENDA_APP;$l.IconLocation=$env:SystemRoot+'\System32\shell32.dll,44';$l.Save()"
 
 echo.
 echo ==============================================
