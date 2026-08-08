@@ -22,9 +22,9 @@ jobs:
           $bytes = [Convert]::FromBase64String($b64)
           [IO.File]::WriteAllBytes((Join-Path $PWD 'windows-ci.zip'), $bytes)
           Expand-Archive .\windows-ci.zip -DestinationPath .\windows-ci -Force
-          $root = Get-ChildItem .\windows-ci -Directory | Where-Object { $_.Name -like 'INSTALAR*Windows' } | Select-Object -First 1
-          if (-not $root) { throw 'No se encontro la carpeta INSTALAR - Windows' }
-          $rootPath = $root.FullName
+          $scriptFile = Get-ChildItem .\windows-ci -Recurse -File -Filter 'MiAgenda.ps1' | Select-Object -First 1
+          if (-not $scriptFile) { throw 'No se encontro MiAgenda.ps1 dentro del paquete' }
+          $rootPath = $scriptFile.Directory.FullName
           "MIAGENDA_ROOT=$rootPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Get-ChildItem $rootPath | Select-Object Name,Length
           $expected = @{
