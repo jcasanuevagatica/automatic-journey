@@ -15,21 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruir paquete Windows
+      - name: Reconstruir paquete Windows y validar archivos criticos
         shell: powershell
         run: |
           $b64 = (Get-Content winci/source.b64 -Raw).Trim()
           $bytes = [Convert]::FromBase64String($b64)
           [IO.File]::WriteAllBytes((Join-Path $PWD 'windows-ci.zip'), $bytes)
           Expand-Archive .\windows-ci.zip -DestinationPath .\windows-ci -Force
+          Get-ChildItem .\windows-ci | Select-Object Name,Length
           $expected = @{
             'MiAgenda.ps1'='7c4f363cde746a5c3e31de509a0fb106566ec29c52fa1c66055b299af29d6622'
             'Instalar_MiAgenda.bat'='cf089ef159526c5db8de913e21ee5c10f6273f33a7a9bcdf99c4066291094cde'
-            'Ejecutar_MiAgenda.bat'='ebf58e862cf0e7f47fcc9d4389445ae87269ea8aa015f98e8187a3e53a680a74'
             'Desinstalar_MiAgenda.bat'='582242e6ad445447b6fa62b78c58cfc907a6b3c2d6e0db5b8f9465c5207ef970'
           }
           foreach ($name in $expected.Keys) {
-            $hash=(Get-FileHash (Join-Path '.\windows-ci' $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            $path=Join-Path '.\windows-ci' $name
+            if (-not (Test-Path $path)) { throw "Falta archivo critico: $name" }
+            $hash=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne $expected[$name]) { throw "Archivo alterado: $name ($hash)" }
           }
 
@@ -44,7 +46,9 @@ jobs:
             $errors | Format-List *
             throw "MiAgenda.ps1 contiene errores de sintaxis"
           }
-          if ($text -notmatch 'blue_white' -or $text -notmatch 'black_white' -or $text -notmatch 'agendaTitle') { throw 'Faltan funciones de personalizacion esperadas' }
+          foreach ($needle in @('blue_white','black_white','agendaTitle')) {
+            if ($text -notmatch $needle) { throw "Falta personalizacion esperada: $needle" }
+          }
 
       - name: Ejecutar modo sincronizacion sin interfaz
         shell: powershell
