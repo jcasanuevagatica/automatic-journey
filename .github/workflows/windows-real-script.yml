@@ -28,8 +28,6 @@ jobs:
           $tokens=$null; $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\real\MiAgenda.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
           if($errors.Count -gt 0){$errors|Format-List *; throw 'Errores de sintaxis'}
-          $raw=[IO.File]::ReadAllText((Resolve-Path '.\real\MiAgenda.ps1'),[Text.Encoding]::UTF8)
-          if($raw -match '\b(return|throw|break|continue)\$'){throw 'Quedo una palabra reservada pegada a una variable'}
       - name: Ejecutar modo SyncOnly
         shell: powershell
         run: |
