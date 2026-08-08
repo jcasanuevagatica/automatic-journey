@@ -1,0 +1,53 @@
+name: Probar Mi Agenda Windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruir paquete Windows
+        shell: powershell
+        run: |
+          $b64 = (Get-Content winci/source.b64 -Raw).Trim()
+          $bytes = [Convert]::FromBase64String($b64)
+          [IO.File]::WriteAllBytes((Join-Path $PWD 'windows-ci.zip'), $bytes)
+          $hash = (Get-FileHash .\windows-ci.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne '2f941f95aae29bd520802fbafe8951d78f1d8d99fe7ff4e94795667678a630cc') { throw "SHA-256 Windows no coincide: $hash" }
+          Expand-Archive .\windows-ci.zip -DestinationPath .\windows-ci -Force
+
+      - name: Analizar sintaxis PowerShell
+        shell: powershell
+        run: |
+          $text = Get-Content .\windows-ci\MiAgenda.ps1 -Raw
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List *
+            throw "MiAgenda.ps1 contiene errores de sintaxis"
+          }
+          if ($text -notmatch 'blue_white' -or $text -notmatch 'black_white' -or $text -notmatch 'agendaTitle') { throw 'Faltan funciones de personalizacion esperadas' }
+
+      - name: Ejecutar modo sincronizacion sin interfaz
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows-ci\MiAgenda.ps1 -SyncOnly
+          if ($LASTEXITCODE -ne 0) { throw "SyncOnly termino con codigo $LASTEXITCODE" }
+
+      - name: Revisar instalador
+        shell: powershell
+        run: |
+          $bat = Get-Content .\windows-ci\Instalar_MiAgenda.bat -Raw
+          foreach ($needle in @('MiAgenda-App','MiAgendaSync','Ejecutar_MiAgenda.bat')) {
+            if (-not $bat.Contains($needle)) { throw "Instalador incompleto: $needle" }
+          }
