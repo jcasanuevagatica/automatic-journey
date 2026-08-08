@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruir script real y aplicar correccion 4.0.3
+      - name: Reconstruir script real y aplicar correccion 4.0.3 sin recodificar
         shell: powershell
         run: |
           $b64=(Get-Content .\realwin\miagenda_ps_test.zip.b64 -Raw).Trim()
@@ -21,19 +21,15 @@ jobs:
           $h=(Get-FileHash .\miagenda.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if($h -ne '341566f779133724e7934bab6be94842def6524c757ec9baeb8432da0ad33264'){throw "ZIP alterado $h"}
           Expand-Archive .\miagenda.zip -DestinationPath .\real -Force
-          $path='.\real\MiAgenda.ps1'
-          $text=Get-Content $path -Raw
-          if($text -notmatch 'return\$b'){throw 'No se encontro el error esperado return$b'}
-          $text=$text.Replace('return$b}','return $b}')
-          [IO.File]::WriteAllText((Resolve-Path $path),$text,(New-Object Text.UTF8Encoding($false)))
-      - name: Analizar sintaxis PowerShell
+          python -c "from pathlib import Path; p=Path(r'real/MiAgenda.ps1'); b=p.read_bytes(); assert b'return$b}' in b; b=b.replace(b'return$b}',b'return $b}',1); b=(b'\xef\xbb\xbf'+b) if not b.startswith(b'\xef\xbb\xbf') else b; p.write_bytes(b)"
+      - name: Analizar sintaxis con Windows PowerShell 5.1
         shell: powershell
         run: |
-          $text=Get-Content .\real\MiAgenda.ps1 -Raw
           $tokens=$null; $errors=$null
-          [System.Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)|Out-Null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\real\MiAgenda.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
           if($errors.Count -gt 0){$errors|Format-List *; throw 'Errores de sintaxis'}
-          if($text -match '\b(return|throw|break|continue)\$'){throw 'Quedo una palabra reservada pegada a una variable'}
+          $raw=[IO.File]::ReadAllText((Resolve-Path '.\real\MiAgenda.ps1'),[Text.Encoding]::UTF8)
+          if($raw -match '\b(return|throw|break|continue)\$'){throw 'Quedo una palabra reservada pegada a una variable'}
       - name: Ejecutar modo SyncOnly
         shell: powershell
         run: |
