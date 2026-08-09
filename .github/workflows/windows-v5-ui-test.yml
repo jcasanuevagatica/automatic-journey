@@ -31,26 +31,30 @@ jobs:
           if($h -ne '4a936d27fdbdbd0988a54823117f773078076c1c3b8ec08db48b6a40e4a057f7'){ throw "Fuente base alterada: $h" }
           Write-Host "Fuente base SHA-256 OK: $h"
 
-      - name: Aplicar correcciones de sintaxis de fecha sin recodificar
+      - name: Aplicar correcciones 5.0 sin recodificar
         shell: python
         run: |
           from pathlib import Path
           p = Path(r'v5/MiAgenda.ps1')
           b = p.read_bytes()
-          old1 = b"ToString('dddd, dd \\'de\\' MMMM \\'de\\' yyyy')"
-          new1 = b'ToString("dddd, dd \'de\' MMMM \'de\' yyyy")'
-          old2 = b"ToString('dddd, dd \\'de\\' MMMM')"
-          new2 = b'ToString("dddd, dd \'de\' MMMM")'
-          assert b.count(old1) == 1, f'Patron fecha larga inesperado: {b.count(old1)}'
-          assert b.count(old2) == 1, f'Patron fecha corta inesperado: {b.count(old2)}'
-          b = b.replace(old1, new1, 1).replace(old2, new2, 1)
+          replacements = [
+              (b"ToString('dddd, dd \\'de\\' MMMM \\'de\\' yyyy')", b'ToString("dddd, dd \'de\' MMMM \'de\' yyyy")', 1),
+              (b"ToString('dddd, dd \\'de\\' MMMM')", b'ToString("dddd, dd \'de\' MMMM")', 1),
+              (b'$conf=Check-TimeConflict $i;if($conf.Count-gt0)', b'$conf=@(Check-TimeConflict $i);if($conf.Count-gt0)', 1),
+              (b"('Tienes '+(Items-OnDate $Script:SelectedDate).Count+' actividades, '", b"('Tienes '+@(Items-OnDate $Script:SelectedDate).Count+' actividades, '", 1),
+              (b"(($editor.Text -split'\\s+'|Where-Object{$_}).Count.ToString()+' palabras')", b"(@($editor.Text -split'\\s+'|Where-Object{$_}).Count.ToString()+' palabras')", 2),
+          ]
+          for old, new, expected in replacements:
+              found = b.count(old)
+              assert found == expected, f'Patron inesperado ({found} != {expected}): {old!r}'
+              b = b.replace(old, new, expected)
           p.write_bytes(b)
 
       - name: Verificar versión corregida
         shell: powershell
         run: |
           $h=(Get-FileHash .\v5\MiAgenda.ps1 -Algorithm SHA256).Hash.ToLowerInvariant()
-          if($h -ne '62f4903c59e66158887b18d985efebef4c12fddef825cad9173932c1c03ab8b3'){ throw "SHA-256 corregido no coincide: $h" }
+          if($h -ne '6496fffb8e3feb04327e18d12aba6715e300ac9ab30596823db7b0e7410805ad'){ throw "SHA-256 corregido no coincide: $h" }
           Write-Host "Versión corregida SHA-256 OK: $h"
 
       - name: Analizar sintaxis con Windows PowerShell 5.1
