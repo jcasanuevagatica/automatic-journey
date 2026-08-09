@@ -78,24 +78,31 @@ jobs:
           if(!(Test-Path $runtime)){ throw 'No se generó runtime' }
           Write-Host 'Interfaz instalada y runtime OK'
 
-      - name: Abrir interfaz en Microsoft Edge headless
+      - name: Abrir interfaz en navegador headless
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $edge=@(
+          $browser=@(
             "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
-            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if(!$edge){ throw 'Microsoft Edge no encontrado en runner' }
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe"
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if(!$browser){
+            $cmd=Get-Command chrome.exe -ErrorAction SilentlyContinue
+            if($cmd){$browser=$cmd.Source}
+          }
+          if(!$browser){ throw 'No se encontró Edge ni Chrome en el runner' }
+          Write-Host "Navegador: $browser"
           $runtime=Join-Path $env:LOCALAPPDATA 'MiAgendaDatos\MiAgenda_runtime.html'
-          $uri=[Uri]$runtime
+          $uri=(New-Object System.Uri($runtime)).AbsoluteUri
           $out=Join-Path $env:RUNNER_TEMP 'dom.txt'
-          & $edge --headless=new --disable-gpu --no-first-run --dump-dom $uri.AbsoluteUri 2>$null | Set-Content -LiteralPath $out -Encoding UTF8
-          if($LASTEXITCODE -ne 0){ throw "Edge terminó con $LASTEXITCODE" }
+          & $browser --headless=new --disable-gpu --no-first-run --dump-dom $uri 2>$null | Set-Content -LiteralPath $out -Encoding UTF8
+          if($LASTEXITCODE -ne 0){ throw "Navegador terminó con $LASTEXITCODE" }
           $dom=Get-Content -LiteralPath $out -Raw -Encoding UTF8
           if($dom -notmatch 'Mi Agenda'){ throw 'La interfaz no renderizó Mi Agenda' }
           if($dom -notmatch 'Previsión'){ throw 'La interfaz renderizada no muestra Previsión' }
-          Write-Host 'Render Edge OK'
+          Write-Host 'Render navegador OK'
 
       - name: Empaquetar instalación Windows probada
         shell: pwsh
