@@ -85,13 +85,18 @@ jobs:
             adb shell am start -W -n cl.miagenda.v51/.MainActivity | tee /tmp/activity-start.txt
             sleep 10
             PID="$(adb shell pidof cl.miagenda.v51 | tr -d '\r')"
-            test -n "$PID"
+            if [ -z "$PID" ]; then echo "Mi Agenda no sigue activa tras 10 segundos"; exit 1; fi
+            adb shell dumpsys activity activities | grep -m1 'cl.miagenda.v51/.MainActivity' >/dev/null || { echo "MainActivity no aparece activa"; exit 1; }
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/build51/android51.png"
             test -s "$GITHUB_WORKSPACE/build51/android51.png"
-            adb shell uiautomator dump /sdcard/miagenda51.xml >/dev/null || true
-            adb pull /sdcard/miagenda51.xml "$GITHUB_WORKSPACE/build51/miagenda51.xml" || true
             adb logcat -d -t 300 > "$GITHUB_WORKSPACE/build51/logcat.txt" || true
-            if grep -E "FATAL EXCEPTION|Process: cl\.miagenda\.v51.*has died" "$GITHUB_WORKSPACE/build51/logcat.txt"; then exit 1; fi
+            if grep -E "FATAL EXCEPTION.*cl\.miagenda\.v51|Process: cl\.miagenda\.v51.*FATAL|AndroidRuntime.*cl\.miagenda\.v51" "$GITHUB_WORKSPACE/build51/logcat.txt" >/dev/null; then
+              echo "Se detectó un fallo fatal de Mi Agenda"
+              grep -E "FATAL EXCEPTION.*cl\.miagenda\.v51|Process: cl\.miagenda\.v51.*FATAL|AndroidRuntime.*cl\.miagenda\.v51" "$GITHUB_WORKSPACE/build51/logcat.txt" || true
+              exit 1
+            fi
+            echo "Mi Agenda Android permanece activa; PID=$PID"
+            exit 0
 
       - name: Preparar artefacto
         shell: bash
