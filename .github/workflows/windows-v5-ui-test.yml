@@ -28,15 +28,40 @@ jobs:
           $zip.Dispose(); $in.Dispose(); $out.Dispose()
           [IO.File]::WriteAllBytes((Join-Path $PWD 'v5\MiAgenda.ps1'),$bytes)
           $h=(Get-FileHash .\v5\MiAgenda.ps1 -Algorithm SHA256).Hash.ToLowerInvariant()
-          if($h -ne '4a936d27fdbdbd0988a54823117f773078076c1c3b8ec08db48b6a40e4a057f7'){ throw "SHA-256 no coincide: $h" }
-          Write-Host "SHA-256 OK: $h"
+          if($h -ne '4a936d27fdbdbd0988a54823117f773078076c1c3b8ec08db48b6a40e4a057f7'){ throw "Fuente base alterada: $h" }
+          Write-Host "Fuente base SHA-256 OK: $h"
+
+      - name: Aplicar correcciones de sintaxis de fecha sin recodificar
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path(r'v5/MiAgenda.ps1')
+          b = p.read_bytes()
+          old1 = b"ToString('dddd, dd \\'de\\' MMMM \\'de\\' yyyy')"
+          new1 = b'ToString("dddd, dd \'de\' MMMM \'de\' yyyy")'
+          old2 = b"ToString('dddd, dd \\'de\\' MMMM')"
+          new2 = b'ToString("dddd, dd \'de\' MMMM")'
+          assert b.count(old1) == 1, f'Patron fecha larga inesperado: {b.count(old1)}'
+          assert b.count(old2) == 1, f'Patron fecha corta inesperado: {b.count(old2)}'
+          b = b.replace(old1, new1, 1).replace(old2, new2, 1)
+          p.write_bytes(b)
+
+      - name: Verificar versión corregida
+        shell: powershell
+        run: |
+          $h=(Get-FileHash .\v5\MiAgenda.ps1 -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne '62f4903c59e66158887b18d985efebef4c12fddef825cad9173932c1c03ab8b3'){ throw "SHA-256 corregido no coincide: $h" }
+          Write-Host "Versión corregida SHA-256 OK: $h"
 
       - name: Analizar sintaxis con Windows PowerShell 5.1
         shell: powershell
         run: |
           $tokens=$null; $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\v5\MiAgenda.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
-          if($errors.Count -gt 0){ $errors | Format-List *; throw 'Mi Agenda 5.0 contiene errores de sintaxis' }
+          if($errors.Count -gt 0){
+            foreach($e in $errors){ Write-Host ("L{0}:C{1} {2} :: {3}" -f $e.Extent.StartLineNumber,$e.Extent.StartColumnNumber,$e.Message,$e.Extent.Text) }
+            throw 'Mi Agenda 5.0 contiene errores de sintaxis'
+          }
           $raw=[IO.File]::ReadAllText((Resolve-Path '.\v5\MiAgenda.ps1'),[Text.Encoding]::UTF8)
           $bad=[regex]::Matches($raw,'\b(return|throw|continue|break)\$[A-Za-z_]')
           if($bad.Count -gt 0){ throw "Palabra reservada pegada a variable: $($bad[0].Value)" }
