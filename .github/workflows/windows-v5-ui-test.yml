@@ -66,3 +66,43 @@ jobs:
           }
           Stop-Process -Id $p.Id -Force
           Write-Host 'Interfaz Mi Agenda 5.0 aprobada permaneció abierta: OK'
+
+      - name: Preparar prueba de reemplazo seguro
+        shell: powershell
+        run: |
+          $installerDir=Join-Path $PWD 'v5\installer'
+          Copy-Item .\v5\MiAgenda.ps1 (Join-Path $installerDir 'MiAgenda.ps1') -Force
+          $data=Join-Path $env:LOCALAPPDATA 'MiAgendaSegura'
+          New-Item -ItemType Directory -Path $data -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $data 'preserve_marker.txt') -Value 'NO_BORRAR_DATOS' -Encoding ASCII
+          $old=Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          New-Item -ItemType Directory -Path $old -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $old 'MiAgenda.ps1') -Value 'return$b' -Encoding ASCII
+          Write-Host 'Instalación antigua defectuosa simulada y datos personales sembrados.'
+
+      - name: Ejecutar instalador final 5.0
+        shell: cmd
+        run: |
+          cd /d "%GITHUB_WORKSPACE%\v5\installer"
+          call 1_INSTALAR_MiAgenda_5.0.cmd
+          if errorlevel 1 exit /b %errorlevel%
+
+      - name: Verificar instalación y preservación de datos
+        shell: powershell
+        run: |
+          $app=Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          $data=Join-Path $env:LOCALAPPDATA 'MiAgendaSegura'
+          $file=Join-Path $app 'MiAgenda.ps1'
+          if(-not(Test-Path $file)){throw 'No se instaló MiAgenda.ps1'}
+          $h=(Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($h -ne 'de2f109fec91a9d5f99e00f59da8c2fdff198b3ec1f3a8f3d19dc4372d5178e8'){throw "Hash instalado incorrecto: $h"}
+          if(Select-String -LiteralPath $file -SimpleMatch 'return$b'){throw 'La instalación conserva el error antiguo return$b'}
+          foreach($f in @('ABRIR_MiAgenda.cmd','SINCRONIZAR_AHORA.cmd','DIAGNOSTICO_MiAgenda.cmd','DESINSTALAR_MiAgenda.cmd')){
+            if(-not(Test-Path (Join-Path $app $f))){throw "Falta archivo instalado: $f"}
+          }
+          $marker=Join-Path $data 'preserve_marker.txt'
+          if(-not(Test-Path $marker)){throw 'El instalador eliminó datos personales'}
+          if((Get-Content $marker -Raw).Trim() -ne 'NO_BORRAR_DATOS'){throw 'El marcador de datos personales fue alterado'}
+          powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File $file -SyncOnly
+          if($LASTEXITCODE -ne 0){throw "La copia instalada falló SyncOnly: $LASTEXITCODE"}
+          Write-Host 'Instalador final: hash, archivos, datos preservados y motor instalado OK.'
