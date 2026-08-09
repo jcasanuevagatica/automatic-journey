@@ -27,7 +27,7 @@ jobs:
           unzip -q /tmp/android_source.zip -d "$GITHUB_WORKSPACE/build51/work"
           test -f "$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html"
           grep -q 'data-section="prevision"' "$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html"
-          grep -q 'AFP UNO' "$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html"
+          grep -q '"UNO":0.46' "$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html"
 
       - name: Java 17
         uses: actions/setup-java@v4
