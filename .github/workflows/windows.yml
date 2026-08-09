@@ -22,14 +22,19 @@ jobs:
           $bytes = [Convert]::FromBase64String($b64)
           [IO.File]::WriteAllBytes((Join-Path $PWD 'windows-ci.zip'), $bytes)
           Expand-Archive .\windows-ci.zip -DestinationPath .\windows-ci -Force
-          Get-ChildItem .\windows-ci | Select-Object Name,Length
+          $scriptFile = Get-ChildItem .\windows-ci -Recurse -File -Filter 'MiAgenda.ps1' | Select-Object -First 1
+          if (-not $scriptFile) { throw 'No se encontro MiAgenda.ps1 dentro del paquete' }
+          $rootPath = $scriptFile.Directory.FullName
+          "MIAGENDA_ROOT=$rootPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Get-ChildItem $rootPath | Select-Object Name,Length
           $expected = @{
             'MiAgenda.ps1'='7c4f363cde746a5c3e31de509a0fb106566ec29c52fa1c66055b299af29d6622'
             'Instalar_MiAgenda.bat'='cf089ef159526c5db8de913e21ee5c10f6273f33a7a9bcdf99c4066291094cde'
+            'Ejecutar_MiAgenda.bat'='ebf58e862cf0e7f47fcc9d4389445ae87269ea8aa015f98e8187a3e53a680a74'
             'Desinstalar_MiAgenda.bat'='582242e6ad445447b6fa62b78c58cfc907a6b3c2d6e0db5b8f9465c5207ef970'
           }
           foreach ($name in $expected.Keys) {
-            $path=Join-Path '.\windows-ci' $name
+            $path=Join-Path $rootPath $name
             if (-not (Test-Path $path)) { throw "Falta archivo critico: $name" }
             $hash=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne $expected[$name]) { throw "Archivo alterado: $name ($hash)" }
@@ -38,13 +43,14 @@ jobs:
       - name: Analizar sintaxis PowerShell
         shell: powershell
         run: |
-          $text = Get-Content .\windows-ci\MiAgenda.ps1 -Raw
+          $scriptPath = Join-Path $env:MIAGENDA_ROOT 'MiAgenda.ps1'
+          $text = Get-Content $scriptPath -Raw
           $tokens = $null
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) {
             $errors | Format-List *
-            throw "MiAgenda.ps1 contiene errores de sintaxis"
+            throw 'MiAgenda.ps1 contiene errores de sintaxis'
           }
           foreach ($needle in @('blue_white','black_white','agendaTitle')) {
             if ($text -notmatch $needle) { throw "Falta personalizacion esperada: $needle" }
@@ -53,13 +59,25 @@ jobs:
       - name: Ejecutar modo sincronizacion sin interfaz
         shell: powershell
         run: |
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows-ci\MiAgenda.ps1 -SyncOnly
+          $scriptPath = Join-Path $env:MIAGENDA_ROOT 'MiAgenda.ps1'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath -SyncOnly
           if ($LASTEXITCODE -ne 0) { throw "SyncOnly termino con codigo $LASTEXITCODE" }
 
-      - name: Revisar instalador
+      - name: Ejecutar instalador real
+        shell: cmd
+        run: |
+          cd /d "%MIAGENDA_ROOT%"
+          call Instalar_MiAgenda.bat
+          if errorlevel 1 exit /b %errorlevel%
+
+      - name: Verificar instalacion
         shell: powershell
         run: |
-          $bat = Get-Content .\windows-ci\Instalar_MiAgenda.bat -Raw
+          $dest = Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          foreach ($name in @('MiAgenda.ps1','Ejecutar_MiAgenda.bat','Desinstalar_MiAgenda.bat')) {
+            if (-not (Test-Path (Join-Path $dest $name))) { throw "Instalacion incompleta: $name" }
+          }
+          $bat = Get-Content (Join-Path $env:MIAGENDA_ROOT 'Instalar_MiAgenda.bat') -Raw
           foreach ($needle in @('MiAgenda-App','MiAgendaSync','Ejecutar_MiAgenda.bat')) {
             if (-not $bat.Contains($needle)) { throw "Instalador incompleto: $needle" }
           }
