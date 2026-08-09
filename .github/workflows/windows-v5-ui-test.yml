@@ -17,8 +17,7 @@ jobs:
       - name: Reconstruir Mi Agenda 5.0 final exacta
         shell: powershell
         run: |
-          $names=@('part00.txt','part01.txt','part03.txt','part03b.txt','part04.txt','part05.txt')
-          $parts = foreach($n in $names){ Get-Content (Join-Path '.\v5\final' $n) -Raw }
+          $parts = 0..15 | ForEach-Object { Get-Content ('.\v5\reliable\p{0:d2}.txt' -f $_) -Raw }
           $b64 = ($parts -join '').Trim()
           $gz = [Convert]::FromBase64String($b64)
           $in = New-Object IO.MemoryStream(,$gz)
