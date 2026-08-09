@@ -1,0 +1,1 @@
+Ejecutar compilación final Android 4.0 después de validar SHA-256.
