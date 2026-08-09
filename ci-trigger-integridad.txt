@@ -1,0 +1,1 @@
+Ejecutar validación de integridad y compilación Android 4.0.
