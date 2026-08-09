@@ -1,0 +1,40 @@
+{
+  "economic": {
+    "updatedAt": "2026-08-09T12:33:00-04:00",
+    "source": "SII / Banco Central de Chile",
+    "uf": {
+      "value": 40844.79,
+      "asOf": "2026-08-09",
+      "source": "Servicio de Impuestos Internos (SII)"
+    },
+    "utm": {
+      "value": 71649,
+      "asOf": "2026-08",
+      "source": "Servicio de Impuestos Internos (SII)"
+    },
+    "usd": {
+      "value": null,
+      "asOf": null,
+      "source": "Banco Central de Chile"
+    },
+    "eur": {
+      "value": null,
+      "asOf": null,
+      "source": "Banco Central de Chile"
+    }
+  },
+  "afp": {
+    "updatedAt": "2026-08-09",
+    "source": "Superintendencia de Pensiones",
+    "mandatoryRate": 10.0,
+    "commissions": {
+      "Capital": 1.44,
+      "Cuprum": 1.44,
+      "Habitat": 1.27,
+      "Modelo": 0.58,
+      "PlanVital": 1.16,
+      "Provida": 1.45,
+      "UNO": 0.46
+    }
+  }
+}
