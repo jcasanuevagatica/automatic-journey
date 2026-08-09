@@ -20,8 +20,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sha256sum build51/chunks/part_00 build51/chunks/part_01 build51/chunks/part_02 build51/chunks/part_03 build51/chunks/part_04 build51/chunks/part_05 build51/chunks/part_06 build51/chunks/part_07 build51/chunks/part_08
           cat build51/chunks/part_00 build51/chunks/part_01 build51/chunks/part_02 build51/chunks/part_03 build51/chunks/part_04 build51/chunks/part_05 build51/chunks/part_06 build51/chunks/part_07 build51/chunks/part_08 > /tmp/android_source.zip.b64
           base64 -d /tmp/android_source.zip.b64 > /tmp/android_source.zip
+          sha256sum /tmp/android_source.zip
           echo "7f360b792e265c8552839d01aa3339c9b52510ac667559befea528572c5e7b77  /tmp/android_source.zip" | sha256sum -c -
           unzip -q /tmp/android_source.zip -d "$GITHUB_WORKSPACE/build51/work"
           test -f "$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html"
