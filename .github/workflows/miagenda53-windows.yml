@@ -1,0 +1,110 @@
+name: Mi Agenda 5.3 Windows - instalar y probar
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruir paquete exacto
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts = 0..4 | ForEach-Object { "build53/windows_package/part_{0:D2}" -f $_ }
+          $b64 = ($parts | ForEach-Object { Get-Content $_ -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'MiAgenda_5.3_WINDOWS_INSTALACION.zip'
+          [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
+          $sha=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha -ne '012f5917f0263da8e999a2b5c5ef45b7143c6284bceaa564bd09ad0acd39d362'){ throw "SHA incorrecto: $sha" }
+          $dest=Join-Path $env:RUNNER_TEMP 'miagenda53'
+          Expand-Archive $zip -DestinationPath $dest -Force
+          $installDir=Join-Path $dest 'INSTALACION'
+          if(-not (Test-Path (Join-Path $installDir '1_INSTALAR_MiAgenda_5.3_Windows.cmd'))){ throw 'Falta instalador' }
+
+      - name: Verificar sintaxis PowerShell
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path (Join-Path $env:RUNNER_TEMP 'miagenda53') 'INSTALACION'
+          foreach($name in @('MiAgendaLauncher.ps1','MiAgendaSyncServer.ps1')){
+            $p=Join-Path $dir $name
+            $tokens=$null; $errors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors) | Out-Null
+            if($errors.Count -gt 0){ $errors | Format-List | Out-String | Write-Host; throw "Error de sintaxis en $name" }
+          }
+
+      - name: Self-test cifrado y DPAPI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path (Join-Path $env:RUNNER_TEMP 'miagenda53') 'INSTALACION'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir 'MiAgendaSyncServer.ps1') -SelfTest
+          if($LASTEXITCODE -ne 0){ throw "SelfTest fallo con codigo $LASTEXITCODE" }
+
+      - name: Ejecutar instalador en modo prueba
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path (Join-Path $env:RUNNER_TEMP 'miagenda53') 'INSTALACION'
+          $env:MIAGENDA_TEST='1'
+          $cmd=Join-Path $dir '1_INSTALAR_MiAgenda_5.3_Windows.cmd'
+          $p=Start-Process -FilePath 'cmd.exe' -ArgumentList '/c',('"' + $cmd + '"') -Wait -PassThru -NoNewWindow
+          if($p.ExitCode -ne 0){ throw "Instalador fallo con codigo $($p.ExitCode)" }
+
+      - name: Verificar instalación y servidor local
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $installed=Join-Path $env:LOCALAPPDATA 'MiAgenda-App'
+          foreach($f in @('MiAgenda.html','MiAgendaLauncher.ps1','MiAgendaSyncServer.ps1')){
+            if(-not (Test-Path (Join-Path $installed $f))){ throw "Falta archivo instalado: $f" }
+          }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $installed 'MiAgendaLauncher.ps1') -NoUpdate -NoLaunch
+          if($LASTEXITCODE -ne 0){ throw 'Launcher de preparación falló' }
+          $server=Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + (Join-Path $installed 'MiAgendaSyncServer.ps1') + '"') -PassThru -WindowStyle Hidden
+          try {
+            $ok=$false
+            1..20 | ForEach-Object {
+              if(-not $ok){
+                Start-Sleep -Milliseconds 500
+                try {
+                  $r=Invoke-RestMethod 'http://127.0.0.1:43153/api/ping' -TimeoutSec 2
+                  if($r){ $ok=$true }
+                } catch {}
+              }
+            }
+            if(-not $ok){ throw 'Servidor local no respondió' }
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Guardar resultado
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build53/windows-test | Out-Null
+          @(
+            'Mi Agenda 5.3 Windows',
+            'Reconstrucción SHA-256: OK',
+            'Sintaxis PowerShell: OK',
+            'Self-test cifrado/DPAPI: OK',
+            'Instalador: OK',
+            'Runtime instalado: OK',
+            'Servidor local /api/ping: OK'
+          ) | Set-Content build53/windows-test/RESULTADO.txt -Encoding UTF8
+
+      - name: Subir resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiAgenda-5.3-Windows-PRUEBA
+          path: build53/windows-test/
+          if-no-files-found: error
