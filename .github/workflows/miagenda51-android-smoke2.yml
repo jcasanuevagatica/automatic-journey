@@ -1,0 +1,109 @@
+name: Mi Agenda 5.1 Android - APK y prueba simple
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruir fuente exacta
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat build51/chunks/part_00 build51/chunks/part_01 build51/chunks/part_02 build51/chunks/part_03 build51/chunks/part_04 build51/chunks/part_05 build51/chunks/part_06 build51/chunks/part_07_00 build51/chunks/part_07_01 build51/chunks/part_07_02 build51/chunks/part_07_03 build51/chunks/part_07_04 build51/chunks/part_08 > /tmp/android_source.zip.b64
+          base64 -d /tmp/android_source.zip.b64 > /tmp/android_source.zip
+          echo "7f360b792e265c8552839d01aa3339c9b52510ac667559befea528572c5e7b77  /tmp/android_source.zip" | sha256sum -c -
+          unzip -q /tmp/android_source.zip -d "$GITHUB_WORKSPACE/build51/work"
+          HTML="$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html"
+          test -f "$HTML"
+          grep -q 'data-section="prevision"' "$HTML"
+          grep -q '"UNO":0.46' "$HTML"
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK
+        working-directory: build51/work/MiAgenda_5.1_Android_source
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Verificar y preparar APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/build51/work/MiAgenda_5.1_Android_source/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='cl.miagenda.v51'" /tmp/badging.txt
+          grep -q "versionName='5.1.0-prueba'" /tmp/badging.txt
+          mkdir -p build51/apk
+          cp "$APK" build51/apk/MiAgenda_5.1_Android_PRUEBA.apk
+          sha256sum build51/apk/MiAgenda_5.1_Android_PRUEBA.apk | tee build51/apk/SHA256_APK.txt
+
+      - name: Subir APK compilado
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiAgenda-5.1-Android-APK
+          path: build51/apk/
+          if-no-files-found: error
+
+      - name: Permiso KVM
+        shell: bash
+        run: sudo chmod 666 /dev/kvm || true
+
+      - name: Instalar y abrir en Android 35
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -e
+            APK="$GITHUB_WORKSPACE/build51/apk/MiAgenda_5.1_Android_PRUEBA.apk"
+            adb install -r "$APK"
+            adb shell am force-stop cl.miagenda.v51 || true
+            adb shell am start -W -n cl.miagenda.v51/.MainActivity | tee /tmp/activity-start.txt
+            grep -q 'Status: ok' /tmp/activity-start.txt
+            sleep 10
+            PID="$(adb shell pidof cl.miagenda.v51 | tr -d '\r')"
+            test -n "$PID"
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/build51/android51.png"
+            test -s "$GITHUB_WORKSPACE/build51/android51.png"
+            echo "Mi Agenda Android permanece activa; PID=$PID"
+
+      - name: Subir captura de prueba
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: MiAgenda-5.1-Android-CAPTURA-PRUEBA
+          path: build51/android51.png
+          if-no-files-found: error
