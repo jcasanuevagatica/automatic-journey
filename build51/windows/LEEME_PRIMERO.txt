@@ -1,0 +1,23 @@
+MI AGENDA 5.1 - PRUEBA WINDOWS
+
+1. Extrae el ZIP completo.
+2. Abre la carpeta INSTALACION.
+3. Haz doble clic en 1_INSTALAR_MiAgenda_5.1_Windows.cmd.
+4. Al terminar, usa el acceso directo Mi Agenda del Escritorio.
+
+Si quieres verla antes de instalar, usa 2_PROBAR_SIN_INSTALAR.cmd.
+
+NOVEDADES DE ESTA PRUEBA
+- Mantiene la interfaz rosa aprobada.
+- Agrega Previsión / AFP Chile.
+- Calcula cotización obligatoria + comisión por AFP para 1 a 30 días.
+- Compara las AFP con el mismo imponible.
+- UF, UTM, dólar y euro intentan actualizarse al abrir desde Banco Central/SII.
+- Las comisiones AFP intentan actualizarse desde la Superintendencia de Pensiones.
+- Si no hay Internet conserva el último valor válido.
+
+IMPORTANTE
+- Esta es una versión de prueba de interfaz y funciones locales.
+- Gmail, Drive, Calendar/Meet todavía requieren OAuth oficial de Google.
+- La sincronización automática Windows <-> Android todavía no se considera final en esta prueba.
+- No elimines la carpeta %LOCALAPPDATA%\MiAgendaDatos si quieres conservar los datos de prueba.

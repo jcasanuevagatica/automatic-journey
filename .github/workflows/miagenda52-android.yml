@@ -1,0 +1,321 @@
+name: Mi Agenda 5.2 Android - compilar y probar
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruir base Android 5.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build52/work
+          cat build51/chunks/part_00 build51/chunks/part_01 build51/chunks/part_02 build51/chunks/part_03 build51/chunks/part_04 build51/chunks/part_05 build51/chunks/part_06 build51/chunks/part_07_00 build51/chunks/part_07_01 build51/chunks/part_07_02 build51/chunks/part_07_03 build51/chunks/part_07_04 build51/chunks/part_08 > /tmp/android51.zip.b64
+          base64 -d /tmp/android51.zip.b64 > /tmp/android51.zip
+          echo "7f360b792e265c8552839d01aa3339c9b52510ac667559befea528572c5e7b77  /tmp/android51.zip" | sha256sum -c -
+          unzip -q /tmp/android51.zip -d build52/work
+
+      - name: Aplicar interfaz aprobada 5.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat build52/html/part_00 build52/html/part_01 build52/html/part_02 build52/html/part_03 build52/html/part_04 > /tmp/miagenda52.html.gz.b64
+          base64 -d /tmp/miagenda52.html.gz.b64 > /tmp/miagenda52.html.gz
+          echo "e44a69d8848230144965f5a3cd71554ab2db844619c2267155da3a9cf4db3898  /tmp/miagenda52.html.gz" | sha256sum -c -
+          gzip -dc /tmp/miagenda52.html.gz > build52/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html
+          echo "434d8e4c4f7143e71a4b4f32069c3452f4fa3c0e7ce18de1f6427d61cda010b2  build52/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html" | sha256sum -c -
+          grep -q 'miagenda-version" content="5.2"' build52/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html
+          grep -q 'data-section="prevision"' build52/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html
+          grep -q 'Resumen de mañana' build52/work/MiAgenda_5.1_Android_source/app/src/main/assets/index.html
+
+      - name: Activar actualización oficial y versión 5.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build52/work/MiAgenda_5.1_Android_source/app"
+          sed -i "s/versionCode 50100/versionCode 50200/" "$APP/build.gradle"
+          sed -i "s/versionName '5.1.0-prueba'/versionName '5.2.0-prueba'/" "$APP/build.gradle"
+          sed -i 's/Mi Agenda 5.1/Mi Agenda 5.2/g' "$APP/src/main/res/values/strings.xml"
+          if ! grep -q 'POST_NOTIFICATIONS' "$APP/src/main/AndroidManifest.xml"; then
+            sed -i '/android.permission.INTERNET/a\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' "$APP/src/main/AndroidManifest.xml"
+          fi
+          cat > "$APP/src/main/java/cl/miagenda/v51/MainActivity.java" <<'JAVA'
+          package cl.miagenda.v51;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.SharedPreferences;
+          import android.content.pm.PackageManager;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.text.Html;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          import org.json.JSONObject;
+
+          import java.io.BufferedReader;
+          import java.io.InputStreamReader;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.nio.charset.StandardCharsets;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+          import java.util.regex.Matcher;
+          import java.util.regex.Pattern;
+
+          public class MainActivity extends Activity {
+              private WebView web;
+              private SharedPreferences prefs;
+              private static final String PREFS="miagenda52";
+              private static final String KEY_DATA="official_data";
+              private static final String KEY_DATE="official_date";
+
+              @Override public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  getWindow().setStatusBarColor(Color.rgb(255,248,251));
+                  getWindow().setNavigationBarColor(Color.rgb(255,248,251));
+                  prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+                  web=new WebView(this);
+                  setContentView(web);
+                  WebSettings s=web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setDatabaseEnabled(true);
+                  s.setAllowFileAccess(true);
+                  s.setAllowContentAccess(false);
+                  s.setBuiltInZoomControls(false);
+                  s.setDisplayZoomControls(false);
+                  s.setTextZoom(100);
+                  web.setWebChromeClient(new WebChromeClient());
+                  web.setWebViewClient(new WebViewClient(){
+                      @Override public void onPageFinished(WebView view,String url){
+                          injectCachedOfficialData();
+                          refreshOfficialDataIfNeeded();
+                      }
+                  });
+                  web.loadUrl("file:///android_asset/index.html");
+                  if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},100);
+                  }
+              }
+
+              private void injectCachedOfficialData(){
+                  String json=prefs.getString(KEY_DATA,null);
+                  if(json==null||json.trim().isEmpty()) return;
+                  String js="try{localStorage.setItem('miagenda.officialData',"+JSONObject.quote(json)+");}catch(e){}";
+                  web.evaluateJavascript(js,null);
+              }
+
+              private void refreshOfficialDataIfNeeded(){
+                  String today=new SimpleDateFormat("yyyy-MM-dd",Locale.US).format(new Date());
+                  if(today.equals(prefs.getString(KEY_DATE,""))) return;
+                  new Thread(() -> {
+                      try {
+                          JSONObject data=buildOfficialData();
+                          if(data!=null){
+                              String json=data.toString();
+                              prefs.edit().putString(KEY_DATA,json).putString(KEY_DATE,today).apply();
+                              runOnUiThread(() -> {
+                                  web.evaluateJavascript("try{localStorage.setItem('miagenda.officialData',"+JSONObject.quote(json)+");location.reload();}catch(e){}",null);
+                              });
+                          }
+                      } catch(Exception ignored) {}
+                  }).start();
+              }
+
+              private JSONObject buildOfficialData() throws Exception {
+                  Date now=new Date();
+                  String today=new SimpleDateFormat("yyyy-MM-dd",Locale.US).format(now);
+                  String year=new SimpleDateFormat("yyyy",Locale.US).format(now);
+                  String ym=new SimpleDateFormat("yyyy-MM",Locale.US).format(now);
+                  int day=Integer.parseInt(new SimpleDateFormat("d",Locale.US).format(now));
+                  int month=Integer.parseInt(new SimpleDateFormat("M",Locale.US).format(now));
+                  String[] months={"Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"};
+                  String monthName=months[month-1];
+
+                  JSONObject root=new JSONObject();
+                  JSONObject eco=new JSONObject();
+                  JSONObject afp=new JSONObject();
+                  eco.put("updatedAt",new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX",Locale.US).format(now));
+                  eco.put("source","Servicio de Impuestos Internos (SII) / Banco Central de Chile");
+
+                  Double uf=null,utm=null,usd=null,eur=null;
+                  try { String t=text(get("https://www.sii.cl/valores_y_fechas/uf/uf"+year+".htm")); String slice=monthSlice(t,monthName,months); uf=value(slice,"(?:^|\\s)"+day+"\\s+([0-9\\.]+,[0-9]+)"); } catch(Exception ignored) {}
+                  try { String t=text(get("https://www.sii.cl/valores_y_fechas/utm/utm"+year+".htm")); utm=value(t,Pattern.quote(monthName)+"\\s+([0-9\\.]+)"); } catch(Exception ignored) {}
+                  try { String t=text(get("https://si3.bcentral.cl/siete/ES/Siete/Cuadro/CAP_TIPO_CAMBIO/MN_TIPO_CAMBIO4/DOLAR_OBS_ADO?idSerie=F073.TCO.PRE.Z.D")); usd=value(t,"[0-9]{1,2}\\.[A-Za-z]{3}\\.[0-9]{4}:?\\s*([0-9\\.]+,[0-9]+)"); } catch(Exception ignored) {}
+                  try { String t=text(get("https://si3.bcentral.cl/siete/ES/Siete/Cuadro/CAP_TIPO_CAMBIO/MN_TIPO_CAMBIO4/TCB_520_TIPO_CAMBIO_NOMINAL?idSerie=F072.CLP.EUR.N.O.D")); eur=value(t,"[0-9]{1,2}\\.[A-Za-z]{3}\\.[0-9]{4}:?\\s*([0-9\\.]+,[0-9]+)"); } catch(Exception ignored) {}
+
+                  int found=0;
+                  if(uf!=null)found++; if(utm!=null)found++; if(usd!=null)found++; if(eur!=null)found++;
+                  if(found==0) return null;
+
+                  eco.put("uf",indicator(uf,today,"Servicio de Impuestos Internos (SII)"));
+                  eco.put("utm",indicator(utm,ym,"Servicio de Impuestos Internos (SII)"));
+                  eco.put("usd",indicator(usd,today,"Banco Central de Chile"));
+                  eco.put("eur",indicator(eur,today,"Banco Central de Chile"));
+                  root.put("economic",eco);
+
+                  JSONObject commissions=new JSONObject();
+                  commissions.put("Capital",1.44); commissions.put("Cuprum",1.44); commissions.put("Habitat",1.27); commissions.put("Modelo",0.58); commissions.put("PlanVital",1.16); commissions.put("Provida",1.45); commissions.put("UNO",0.46);
+                  try {
+                      String sp=text(get("https://www.spensiones.cl/portal/institucional/594/w3-article-2815.html"));
+                      String[][] names={{"Capital","Capital"},{"Cuprum","Cuprum"},{"Habitat","Habitat"},{"Modelo","Modelo"},{"Planvital","PlanVital"},{"Provida","Provida"},{"Uno","UNO"}};
+                      for(String[] n:names){
+                          Double v=value(sp,"AFP\\s+"+n[0]+":?\\s*([0-9]+,[0-9]+)%");
+                          if(v!=null)commissions.put(n[1],v);
+                      }
+                  } catch(Exception ignored) {}
+                  afp.put("updatedAt",today);
+                  afp.put("source","Superintendencia de Pensiones");
+                  afp.put("mandatoryRate",10.0);
+                  afp.put("employerRate",3.5);
+                  afp.put("healthRate",7.0);
+                  afp.put("afcWorkerIndefinite",0.6);
+                  afp.put("commissions",commissions);
+                  root.put("afp",afp);
+                  return root;
+              }
+
+              private JSONObject indicator(Double v,String asOf,String src) throws Exception {
+                  JSONObject o=new JSONObject();
+                  if(v==null)o.put("value",JSONObject.NULL);else o.put("value",v);
+                  o.put("asOf",asOf);
+                  o.put("source",src);
+                  return o;
+              }
+
+              private String get(String u) throws Exception {
+                  HttpURLConnection c=(HttpURLConnection)new URL(u).openConnection();
+                  c.setConnectTimeout(7000);
+                  c.setReadTimeout(7000);
+                  c.setRequestProperty("User-Agent","Mozilla/5.0 MiAgenda/5.2 Android");
+                  try(BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8))){
+                      StringBuilder b=new StringBuilder();
+                      String line;
+                      while((line=br.readLine())!=null)b.append(line).append('\n');
+                      return b.toString();
+                  } finally { c.disconnect(); }
+              }
+
+              private String text(String raw){
+                  return Html.fromHtml(raw,Html.FROM_HTML_MODE_LEGACY).toString().replaceAll("\\s+"," ").trim();
+              }
+
+              private Double value(String t,String regex){
+                  if(t==null)return null;
+                  Matcher m=Pattern.compile(regex,Pattern.CASE_INSENSITIVE).matcher(t);
+                  if(!m.find())return null;
+                  String x=m.group(1).replace(".","").replace(",",".");
+                  try{return Double.parseDouble(x);}catch(Exception e){return null;}
+              }
+
+              private String monthSlice(String text,String month,String[] months){
+                  if(text==null)return null;
+                  String low=text.toLowerCase(Locale.ROOT);
+                  int i=low.indexOf(month.toLowerCase(Locale.ROOT));
+                  if(i<0)return null;
+                  int end=text.length();
+                  for(String m:months){
+                      if(m.equals(month))continue;
+                      int j=low.indexOf(m.toLowerCase(Locale.ROOT),i+month.length());
+                      if(j>=0&&j<end)end=j;
+                  }
+                  return text.substring(i,end);
+              }
+
+              @Override public void onBackPressed(){
+                  if(web!=null&&web.canGoBack())web.goBack();else super.onBackPressed();
+              }
+          }
+          JAVA
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Preparar Android SDK 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK
+        working-directory: build52/work/MiAgenda_5.1_Android_source
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Verificar y preparar APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build52/work/MiAgenda_5.1_Android_source/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging build52/work/MiAgenda_5.1_Android_source/app/build/outputs/apk/debug/app-debug.apk | tee /tmp/badging52.txt
+          grep -q "package: name='cl.miagenda.v51'" /tmp/badging52.txt
+          grep -q "versionName='5.2.0-prueba'" /tmp/badging52.txt
+          mkdir -p build52/apk
+          cp build52/work/MiAgenda_5.1_Android_source/app/build/outputs/apk/debug/app-debug.apk build52/apk/MiAgenda_5.2_Android_PRUEBA.apk
+          sha256sum build52/apk/MiAgenda_5.2_Android_PRUEBA.apk | tee build52/apk/SHA256_APK.txt
+
+      - name: Subir APK compilado
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiAgenda-5.2-Android-APK
+          path: build52/apk/
+          if-no-files-found: error
+
+      - name: Permiso KVM
+        shell: bash
+        run: sudo chmod 666 /dev/kvm || true
+
+      - name: Instalar y abrir en Android 35
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            adb install -r "$GITHUB_WORKSPACE/build52/apk/MiAgenda_5.2_Android_PRUEBA.apk"
+            adb shell am force-stop cl.miagenda.v51
+            adb shell am start -W -n cl.miagenda.v51/.MainActivity | tee /tmp/activity-start52.txt
+            grep -q 'Status: ok' /tmp/activity-start52.txt
+            sleep 10
+            adb shell pidof cl.miagenda.v51 | grep -q .
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/build52/android52.png"
+            test -s "$GITHUB_WORKSPACE/build52/android52.png"
+
+      - name: Subir captura de prueba
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: MiAgenda-5.2-Android-CAPTURA-PRUEBA
+          path: build52/android52.png
+          if-no-files-found: error

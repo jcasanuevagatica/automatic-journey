@@ -1,0 +1,124 @@
+name: Mi Agenda 5.1 Windows - instalar y probar
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruir interfaz exacta y preparar INSTALACION
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $parts=@(
+            'part_00','part_01','part_02','part_03','part_04','part_05','part_06',
+            'part_07_00','part_07_01','part_07_02','part_07_03','part_07_04','part_08'
+          )
+          $b64=($parts | ForEach-Object { Get-Content -LiteralPath (Join-Path 'build51/chunks' $_) -Raw }) -join ''
+          $bytes=[Convert]::FromBase64String($b64)
+          $zip=Join-Path $env:RUNNER_TEMP 'android_source.zip'
+          [IO.File]::WriteAllBytes($zip,$bytes)
+          $sha=(Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if($sha -ne '7f360b792e265c8552839d01aa3339c9b52510ac667559befea528572c5e7b77'){ throw "SHA fuente incorrecto: $sha" }
+          $extract=Join-Path $env:RUNNER_TEMP 'src51'
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          $html=Join-Path $extract 'MiAgenda_5.1_Android_source/app/src/main/assets/index.html'
+          if(!(Test-Path $html)){ throw 'No aparece index.html' }
+          $text=Get-Content -LiteralPath $html -Raw -Encoding UTF8
+          if($text -notmatch 'data-section="prevision"'){ throw 'Falta Previsión / AFP' }
+          if($text -notmatch '"UNO":0\.46'){ throw 'Falta AFP UNO 0,46%' }
+          $inst=Join-Path $env:RUNNER_TEMP 'INSTALACION'
+          New-Item -ItemType Directory -Force -Path $inst | Out-Null
+          Copy-Item -LiteralPath $html -Destination (Join-Path $inst 'MiAgenda.html')
+          Copy-Item -Path 'build51/windows/*' -Destination $inst -Force
+          "INST=$inst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Revisar sintaxis PowerShell
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          [void][scriptblock]::Create((Get-Content -LiteralPath (Join-Path $env:INST 'MiAgendaLauncher.ps1') -Raw -Encoding UTF8))
+          Write-Host 'Sintaxis PowerShell OK'
+
+      - name: Simular datos previos y ejecutar instalador
+        shell: cmd
+        env:
+          MIAGENDA_TEST: '1'
+        run: |
+          if not exist "%LOCALAPPDATA%\MiAgendaDatos" mkdir "%LOCALAPPDATA%\MiAgendaDatos"
+          echo NO_BORRAR_ESTE_MARCADOR>"%LOCALAPPDATA%\MiAgendaDatos\preservar.txt"
+          call "%INST%\1_INSTALAR_MiAgenda_5.1_Windows.cmd"
+          if errorlevel 1 exit /b %errorlevel%
+          if not exist "%LOCALAPPDATA%\MiAgendaDatos\preservar.txt" exit /b 40
+          if not exist "%LOCALAPPDATA%\MiAgendaDatos\MiAgenda_runtime.html" exit /b 41
+          if not exist "%LOCALAPPDATA%\MiAgenda-5.1\MiAgenda.html" exit /b 42
+
+      - name: Verificar interfaz instalada
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $html=Join-Path $env:LOCALAPPDATA 'MiAgenda-5.1\MiAgenda.html'
+          $runtime=Join-Path $env:LOCALAPPDATA 'MiAgendaDatos\MiAgenda_runtime.html'
+          $t=Get-Content -LiteralPath $html -Raw -Encoding UTF8
+          if($t -notmatch 'data-section="prevision"'){ throw 'Interfaz instalada sin AFP' }
+          if($t -notmatch 'UF'){ throw 'Falta UF' }
+          if($t -notmatch 'UTM'){ throw 'Falta UTM' }
+          if($t -notmatch 'Dólar'){ throw 'Falta dólar' }
+          if($t -notmatch 'Euro'){ throw 'Falta euro' }
+          if(!(Test-Path $runtime)){ throw 'No se generó runtime' }
+          Write-Host 'Interfaz instalada y runtime OK'
+
+      - name: Abrir interfaz en navegador headless
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $browser=@(
+            "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe"
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if(!$browser){
+            $cmd=Get-Command chrome.exe -ErrorAction SilentlyContinue
+            if($cmd){$browser=$cmd.Source}
+          }
+          if(!$browser){ throw 'No se encontró Edge ni Chrome en el runner' }
+          Write-Host "Navegador: $browser"
+          $runtime=Join-Path $env:LOCALAPPDATA 'MiAgendaDatos\MiAgenda_runtime.html'
+          $uri=(New-Object System.Uri($runtime)).AbsoluteUri
+          $out=Join-Path $env:RUNNER_TEMP 'dom.txt'
+          & $browser --headless=new --disable-gpu --no-first-run --dump-dom $uri 2>$null | Set-Content -LiteralPath $out -Encoding UTF8
+          if($LASTEXITCODE -ne 0){ throw "Navegador terminó con $LASTEXITCODE" }
+          $dom=Get-Content -LiteralPath $out -Raw -Encoding UTF8
+          if($dom -notmatch 'Mi Agenda'){ throw 'La interfaz no renderizó Mi Agenda' }
+          if($dom -notmatch 'Previsión'){ throw 'La interfaz renderizada no muestra Previsión' }
+          Write-Host 'Render navegador OK'
+
+      - name: Empaquetar instalación Windows probada
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'paquete'
+          $dst=Join-Path $root 'INSTALACION'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Path (Join-Path $env:INST '*') -Destination $dst -Force
+          $hashLines=Get-ChildItem -File $dst | ForEach-Object { "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(),$_.Name }
+          $hashLines | Set-Content -LiteralPath (Join-Path $dst 'SHA256SUMS.txt') -Encoding ASCII
+          Compress-Archive -Path $dst -DestinationPath (Join-Path $env:RUNNER_TEMP 'MiAgenda_5.1_WINDOWS_INSTALACION.zip') -Force
+
+      - name: Subir instalación Windows probada
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiAgenda-5.1-Windows-INSTALACION
+          path: ${{ runner.temp }}/MiAgenda_5.1_WINDOWS_INSTALACION.zip
+          if-no-files-found: error

@@ -1,0 +1,125 @@
+name: Mi Agenda 5.3 Windows - instalar y probar
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruir interfaz 5.3 exacta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python build53/reconstruct53.py "$env:RUNNER_TEMP\MiAgenda_5.3.html"
+          if($LASTEXITCODE -ne 0){ throw 'Falló reconstrucción exacta 5.3' }
+
+      - name: Crear carpeta INSTALACION
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:GITHUB_WORKSPACE 'build53\windows-final'
+          $inst=Join-Path $root 'INSTALACION'
+          New-Item -ItemType Directory -Force $inst | Out-Null
+          $html=Join-Path $env:RUNNER_TEMP 'MiAgenda_5.3.html'
+          Copy-Item $html (Join-Path $inst 'MiAgenda.html') -Force
+          @'
+          Option Explicit
+          Dim sh, fso, appDir, html, edge1, edge2, edge3, edge, uri
+          Set sh = CreateObject("WScript.Shell")
+          Set fso = CreateObject("Scripting.FileSystemObject")
+          appDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\MiAgenda-App"
+          html = appDir & "\MiAgenda.html"
+          If Not fso.FileExists(html) Then
+            MsgBox "No encuentro Mi Agenda instalada. Ejecuta nuevamente INSTALACION.", 48, "Mi Agenda"
+            WScript.Quit 2
+          End If
+          edge1 = sh.ExpandEnvironmentStrings("%ProgramFiles(x86)%") & "\Microsoft\Edge\Application\msedge.exe"
+          edge2 = sh.ExpandEnvironmentStrings("%ProgramFiles%") & "\Microsoft\Edge\Application\msedge.exe"
+          edge3 = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Microsoft\Edge\Application\msedge.exe"
+          edge = ""
+          If fso.FileExists(edge1) Then edge = edge1
+          If edge = "" And fso.FileExists(edge2) Then edge = edge2
+          If edge = "" And fso.FileExists(edge3) Then edge = edge3
+          uri = "file:///" & Replace(html, "\", "/")
+          If edge <> "" Then
+            sh.Run Chr(34) & edge & Chr(34) & " --app=" & Chr(34) & uri & Chr(34) & " --start-maximized", 1, False
+          Else
+            sh.Run "cmd /c start """" " & Chr(34) & html & Chr(34), 0, False
+          End If
+          '@ | Set-Content (Join-Path $inst 'ABRIR_MiAgenda.vbs') -Encoding ASCII
+          @'
+          @echo off
+          setlocal
+          chcp 65001 >nul
+          set "TARGET=%LOCALAPPDATA%\MiAgenda-App"
+          echo.
+          echo ==========================================
+          echo        MI AGENDA 5.3 - INSTALACION
+          echo ==========================================
+          echo.
+          if not exist "%~dp0MiAgenda.html" (
+            echo ERROR: falta MiAgenda.html en la carpeta INSTALACION.
+            if not "%MIAGENDA_TEST%"=="1" pause
+            exit /b 2
+          )
+          if not exist "%TARGET%" mkdir "%TARGET%" >nul 2>&1
+          if exist "%TARGET%\MiAgenda.html" copy /Y "%TARGET%\MiAgenda.html" "%TARGET%\MiAgenda_anterior.html" >nul 2>&1
+          copy /Y "%~dp0MiAgenda.html" "%TARGET%\MiAgenda.html" >nul || goto :error
+          copy /Y "%~dp0ABRIR_MiAgenda.vbs" "%TARGET%\ABRIR_MiAgenda.vbs" >nul || goto :error
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $lnk=$ws.CreateShortcut((Join-Path $desk 'Mi Agenda.lnk')); $lnk.TargetPath=(Join-Path $env:WINDIR 'System32\wscript.exe'); $lnk.Arguments='""'+(Join-Path $env:LOCALAPPDATA 'MiAgenda-App\ABRIR_MiAgenda.vbs')+'""'; $lnk.WorkingDirectory=(Join-Path $env:LOCALAPPDATA 'MiAgenda-App'); $lnk.Description='Mi Agenda 5.3'; $lnk.Save()" || goto :error
+          if "%MIAGENDA_TEST%"=="1" goto :ok
+          start "" wscript.exe "%TARGET%\ABRIR_MiAgenda.vbs"
+          :ok
+          echo Mi Agenda 5.3 fue instalada correctamente.
+          if not "%MIAGENDA_TEST%"=="1" pause
+          exit /b 0
+          :error
+          echo No se pudo completar la instalacion.
+          if not "%MIAGENDA_TEST%"=="1" pause
+          exit /b 1
+          '@ | Set-Content (Join-Path $inst '1_INSTALAR_MiAgenda_5.3_Windows.cmd') -Encoding ASCII
+          @'
+          MI AGENDA 5.3 - WINDOWS
+
+          1. Extrae el ZIP completo.
+          2. Entra a la carpeta INSTALACION.
+          3. Haz doble clic en 1_INSTALAR_MiAgenda_5.3_Windows.cmd.
+          4. Se creará el acceso directo Mi Agenda.
+
+          La versión 5.3 conserva copia local, cola offline, respaldo y paquetes de sincronización cifrados.
+          Si ya tienes una versión anterior, no la desinstales: el instalador guarda MiAgenda_anterior.html.
+          La sincronización automática en nube sigue pendiente de OAuth/servicio protegido.
+          '@ | Set-Content (Join-Path $inst 'LEEME_PRIMERO.txt') -Encoding UTF8
+      - name: Probar instalación real
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $inst=Join-Path $env:GITHUB_WORKSPACE 'build53\windows-final\INSTALACION'
+          $expected=(Get-FileHash (Join-Path $inst 'MiAgenda.html') -Algorithm SHA256).Hash
+          $env:MIAGENDA_TEST='1'
+          $p=Start-Process cmd.exe -ArgumentList '/c',('"' + (Join-Path $inst '1_INSTALAR_MiAgenda_5.3_Windows.cmd') + '"') -Wait -PassThru -NoNewWindow
+          if($p.ExitCode -ne 0){ throw "Instalador falló: $($p.ExitCode)" }
+          $installed=Join-Path $env:LOCALAPPDATA 'MiAgenda-App\MiAgenda.html'
+          if(-not (Test-Path $installed)){ throw 'No quedó instalada la interfaz' }
+          $actual=(Get-FileHash $installed -Algorithm SHA256).Hash
+          if($actual -ne $expected){ throw 'La interfaz instalada no coincide con el paquete' }
+          if(-not (Test-Path (Join-Path $env:LOCALAPPDATA 'MiAgenda-App\ABRIR_MiAgenda.vbs'))){ throw 'Falta lanzador' }
+          if(-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Mi Agenda.lnk'))){ throw 'Falta acceso directo' }
+          Write-Host 'INSTALACION WINDOWS 5.3: OK'
+      - name: Empaquetar ZIP probado
+        shell: pwsh
+        run: |
+          $zip=Join-Path $env:GITHUB_WORKSPACE 'build53\MiAgenda_5.3_WINDOWS_INSTALACION.zip'
+          if(Test-Path $zip){Remove-Item $zip -Force}
+          Compress-Archive -Path (Join-Path $env:GITHUB_WORKSPACE 'build53\windows-final\INSTALACION') -DestinationPath $zip
+          Get-FileHash $zip -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiAgenda-5.3-Windows-INSTALACION
+          path: build53/MiAgenda_5.3_WINDOWS_INSTALACION.zip
+          if-no-files-found: error
