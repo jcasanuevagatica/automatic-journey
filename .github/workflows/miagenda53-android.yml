@@ -11,37 +11,55 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruir y validar fuente 5.3
+
+      - name: Reconstruir fuente nativa Android 5.3
         shell: bash
         run: |
           set -euo pipefail
           cat build53/android_source/part_00 build53/android_source/part_01 build53/android_source/part_02 build53/android_source/part_03 build53/android_source/part_04 > /tmp/android53.b64
           base64 -d /tmp/android53.b64 > /tmp/android53.zip
-          echo "ZIP SHA:"; sha256sum /tmp/android53.zip
-          # El archivo fuente histórico tiene un CRC incorrecto solo en index.html.
-          # Extraemos y validamos el contenido que realmente compilará el APK.
-          unzip -t /tmp/android53.zip || true
           rm -rf build53/work && mkdir -p build53/work
           unzip -q /tmp/android53.zip -d build53/work || true
           APP="build53/work/MiAgenda_5.3_Android_source/app"
-          test -f "$APP/src/main/assets/index.html"
           test -f "$APP/src/main/java/cl/miagenda/v53/CryptoManager.java"
           test -f "$APP/src/main/java/cl/miagenda/v53/SyncCrypto.java"
           test -f "$APP/src/main/java/cl/miagenda/v53/MainActivity.java"
-          echo "HTML size: $(wc -c < "$APP/src/main/assets/index.html")"
-          echo "version markers: $(grep -c '5.3' "$APP/src/main/assets/index.html" || true)"
-          echo "sync markers: $(grep -c 'miagenda-sync-v2-encrypted' "$APP/src/main/assets/index.html" || true)"
-          echo "selftest markers: $(grep -c 'runSyncSelfTest' "$APP/src/main/assets/index.html" || true)"
-          grep -q 'Mi Agenda' "$APP/src/main/assets/index.html"
-          grep -q 'Sincronizar entre dispositivos' "$APP/src/main/assets/index.html"
           grep -q 'MiAgendaNative' "$APP/src/main/java/cl/miagenda/v53/MainActivity.java"
-          grep -q "applicationId 'cl.miagenda.v53'" "$APP/build.gradle"
-          grep -q "versionName '5.3.0-prueba'" "$APP/build.gradle"
-          echo "HTML SHA:"; sha256sum "$APP/src/main/assets/index.html"
+          grep -q 'onShowFileChooser' "$APP/src/main/java/cl/miagenda/v53/MainActivity.java"
+
+      - name: Reconstruir interfaz 5.2 validada
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat build52/html/part_00 build52/html/part_01 build52/html/part_02 build52/html/part_03 build52/html/part_04 > /tmp/miagenda52.html.gz.b64
+          base64 -d /tmp/miagenda52.html.gz.b64 > /tmp/miagenda52.html.gz
+          echo "e44a69d8848230144965f5a3cd71554ab2db844619c2267155da3a9cf4db3898  /tmp/miagenda52.html.gz" | sha256sum -c -
+          gzip -dc /tmp/miagenda52.html.gz > /tmp/MiAgenda_5.2.html
+          echo "434d8e4c4f7143e71a4b4f32069c3452f4fa3c0e7ce18de1f6427d61cda010b2  /tmp/MiAgenda_5.2.html" | sha256sum -c -
+
+      - name: Aplicar mejora 5.3 exacta
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat build53/patch/part_00 build53/patch/part_01 > /tmp/patch53.gz.b64
+          base64 -d /tmp/patch53.gz.b64 > /tmp/patch53.gz
+          echo "6e7e1431da21e38dc1904742e38d4ba6c7799283f013361e5dcdcba7ee35f01b  /tmp/patch53.gz" | sha256sum -c -
+          gzip -dc /tmp/patch53.gz > /tmp/miagenda52_to_53.patch
+          echo "ee4c329fbf978725209bd6fb18866da4bda2d8c11201970aa3dfaeb550c8390a  /tmp/miagenda52_to_53.patch" | sha256sum -c -
+          cp /tmp/MiAgenda_5.2.html /tmp/MiAgenda_5.3.html
+          patch /tmp/MiAgenda_5.3.html < /tmp/miagenda52_to_53.patch
+          echo "c7b4ee5c6dd7118f6357b10767e2c812cff67053928c0992bffdb45ad63235e5  /tmp/MiAgenda_5.3.html" | sha256sum -c -
+          APP="build53/work/MiAgenda_5.3_Android_source/app"
+          cp /tmp/MiAgenda_5.3.html "$APP/src/main/assets/index.html"
+          grep -q 'miagenda-version" content="5.3"' "$APP/src/main/assets/index.html"
+          grep -q 'miagenda-sync-v2-encrypted' "$APP/src/main/assets/index.html"
+          grep -q 'runSyncSelfTest' "$APP/src/main/assets/index.html"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - name: Preparar Android SDK 35
         shell: bash
         run: |
@@ -51,12 +69,15 @@ jobs:
           if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"; fi
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+
       - name: Compilar APK
         working-directory: build53/work/MiAgenda_5.3_Android_source
         run: gradle --no-daemon :app:assembleDebug --stacktrace
+
       - name: Verificar APK
         shell: bash
         run: |
@@ -69,12 +90,16 @@ jobs:
           mkdir -p build53/apk
           cp "$APK" build53/apk/MiAgenda_5.3_Android_PRUEBA.apk
           sha256sum build53/apk/MiAgenda_5.3_Android_PRUEBA.apk > build53/apk/SHA256_APK.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: MiAgenda-5.3-Android-APK
           path: build53/apk/
-      - name: KVM
+          if-no-files-found: error
+
+      - name: Permiso KVM
         run: sudo chmod 666 /dev/kvm || true
+
       - name: Instalar y abrir Android 35
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
@@ -94,8 +119,10 @@ jobs:
             adb shell pidof cl.miagenda.v53 | grep -q .
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/build53/android53.png"
             test -s "$GITHUB_WORKSPACE/build53/android53.png"
+
       - uses: actions/upload-artifact@v4
         if: success()
         with:
           name: MiAgenda-5.3-Android-CAPTURA
           path: build53/android53.png
+          if-no-files-found: error
