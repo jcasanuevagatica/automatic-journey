@@ -27,10 +27,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat build53/exact_html/part_00 build53/exact_html/part_01 build53/exact_html/part_02 > /tmp/miagenda53.gz.b64
-          base64 -d /tmp/miagenda53.gz.b64 > /tmp/miagenda53.gz
-          echo "28fbcf5e8cc806e87a5d9f33486b6ffea7fe81fdee3ecfe9c19651be71dbeb93  /tmp/miagenda53.gz" | sha256sum -c -
-          gzip -dc /tmp/miagenda53.gz > /tmp/MiAgenda_5.3.html
+          cat build52/html/part_00 build52/html/part_01 build52/html/part_02 build52/html/part_03 build52/html/part_04 > /tmp/miagenda52.html.gz.b64
+          base64 -d /tmp/miagenda52.html.gz.b64 > /tmp/miagenda52.html.gz
+          echo "e44a69d8848230144965f5a3cd71554ab2db844619c2267155da3a9cf4db3898  /tmp/miagenda52.html.gz" | sha256sum -c -
+          gzip -dc /tmp/miagenda52.html.gz > /tmp/MiAgenda_5.2.html
+          echo "434d8e4c4f7143e71a4b4f32069c3452f4fa3c0e7ce18de1f6427d61cda010b2  /tmp/MiAgenda_5.2.html" | sha256sum -c -
+          cat build53/patch/part_00 build53/patch/part_01 > /tmp/patch53.gz.b64
+          base64 -d /tmp/patch53.gz.b64 > /tmp/patch53.gz
+          echo "6e7e1431da21e38dc1904742e38d4ba6c7799283f013361e5dcdcba7ee35f01b  /tmp/patch53.gz" | sha256sum -c -
+          gzip -dc /tmp/patch53.gz > /tmp/miagenda52_to_53.patch
+          echo "ee4c329fbf978725209bd6fb18866da4bda2d8c11201970aa3dfaeb550c8390a  /tmp/miagenda52_to_53.patch" | sha256sum -c -
+          cp /tmp/MiAgenda_5.2.html /tmp/MiAgenda_5.3.html
+          patch /tmp/MiAgenda_5.3.html < /tmp/miagenda52_to_53.patch
           echo "c7b4ee5c6dd7118f6357b10767e2c812cff67053928c0992bffdb45ad63235e5  /tmp/MiAgenda_5.3.html" | sha256sum -c -
           APP=build53/work/MiAgenda_5.1_Android_source/app
           cp /tmp/MiAgenda_5.3.html "$APP/src/main/assets/index.html"
