@@ -11,24 +11,33 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruir interfaz 5.3
+      - name: Reconstruir interfaz 5.3 exacta
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $parts=0..4 | ForEach-Object { "build53/android_source/part_{0:D2}" -f $_ }
-          $b64=($parts | ForEach-Object { Get-Content $_ -Raw }) -join ''
-          $src=Join-Path $env:RUNNER_TEMP 'android53.zip'
-          [IO.File]::WriteAllBytes($src,[Convert]::FromBase64String($b64))
-          $extract=Join-Path $env:RUNNER_TEMP 'src53'
-          New-Item -ItemType Directory -Force $extract | Out-Null
-          $seven='C:\Program Files\7-Zip\7z.exe'
-          & $seven x $src "-o$extract" -y | Out-Host
-          $html=Join-Path $extract 'MiAgenda_5.3_Android_source\app\src\main\assets\index.html'
-          if(-not (Test-Path $html)){ throw 'No se pudo extraer la interfaz 5.3' }
+          $parts=@('build53/exact_html/part_00','build53/exact_html/part_01','build53/exact_html/part_02')
+          $b64=($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ''
+          $gz=Join-Path $env:RUNNER_TEMP 'miagenda53.gz'
+          [IO.File]::WriteAllBytes($gz,[Convert]::FromBase64String($b64))
+          $gzHash=(Get-FileHash $gz -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($gzHash -ne '28fbcf5e8cc806e87a5d9f33486b6ffea7fe81fdee3ecfe9c19651be71dbeb93'){ throw "GZIP hash incorrecto: $gzHash" }
+          $html=Join-Path $env:RUNNER_TEMP 'MiAgenda_5.3.html'
+          $input=[IO.File]::OpenRead($gz)
+          try {
+            $stream=New-Object IO.Compression.GZipStream($input,[IO.Compression.CompressionMode]::Decompress)
+            try {
+              $output=[IO.File]::Create($html)
+              try { $stream.CopyTo($output) } finally { $output.Dispose() }
+            } finally { $stream.Dispose() }
+          } finally { $input.Dispose() }
+          $htmlHash=(Get-FileHash $html -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($htmlHash -ne 'c7b4ee5c6dd7118f6357b10767e2c812cff67053928c0992bffdb45ad63235e5'){ throw "HTML hash incorrecto: $htmlHash" }
           $txt=Get-Content $html -Raw
-          if($txt -notmatch 'Mi Agenda'){ throw 'Interfaz inválida' }
-          if($txt -notmatch 'Sincronizar entre dispositivos'){ throw 'Falta módulo de sincronización' }
-          Write-Host "HTML SHA:" (Get-FileHash $html -Algorithm SHA256).Hash
+          if($txt -notmatch 'miagenda-version" content="5.3"'){throw 'Versión 5.3 ausente'}
+          if($txt -notmatch 'miagenda-sync-v2-encrypted'){throw 'Motor de sincronización ausente'}
+          if($txt -notmatch 'runSyncSelfTest'){throw 'Autoprueba de sincronización ausente'}
+          Write-Host "INTERFAZ 5.3 EXACTA: OK"
+
       - name: Crear carpeta INSTALACION
         shell: pwsh
         run: |
@@ -36,7 +45,7 @@ jobs:
           $root=Join-Path $env:GITHUB_WORKSPACE 'build53\windows-final'
           $inst=Join-Path $root 'INSTALACION'
           New-Item -ItemType Directory -Force $inst | Out-Null
-          $html=Join-Path $env:RUNNER_TEMP 'src53\MiAgenda_5.3_Android_source\app\src\main\assets\index.html'
+          $html=Join-Path $env:RUNNER_TEMP 'MiAgenda_5.3.html'
           Copy-Item $html (Join-Path $inst 'MiAgenda.html') -Force
           @'
           Option Explicit
